@@ -127,8 +127,14 @@ const REQUEST_ONLY_HEADERS = new Set([
 ]);
 
 function stripRequestOnlyHeaders(headers: Headers): void {
-	for (const name of REQUEST_ONLY_HEADERS) {
-		headers.delete(name);
+	// Response headers are usually few. Walk those instead of deleting ~40
+	// request-only names that are almost never present. Snapshot keys first
+	// because Headers iteration is live and `delete` would skip neighbors.
+	const names = [...headers.keys()];
+	for (const name of names) {
+		if (REQUEST_ONLY_HEADERS.has(name)) {
+			headers.delete(name);
+		}
 	}
 }
 
