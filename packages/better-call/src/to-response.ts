@@ -23,7 +23,7 @@ function isJSONSerializable(value: any) {
 	);
 }
 
-function safeStringify(obj: unknown): string {
+function stringifyWithCycles(obj: unknown): string {
 	const parents = new WeakMap<object, object>();
 	const ids = new WeakMap<object, number>();
 	let id = 0;
@@ -48,6 +48,14 @@ function safeStringify(obj: unknown): string {
 		}
 		return value;
 	});
+}
+
+function safeStringify(obj: unknown): string {
+	try {
+		return JSON.stringify(obj);
+	} catch {
+		return stringifyWithCycles(obj);
+	}
 }
 
 export type JSONResponse = {
