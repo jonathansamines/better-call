@@ -171,6 +171,30 @@ describe("runtime", () => {
 		]);
 	});
 
+	it("nested middleware without a schema keeps endpoint helpers", async () => {
+		const middleware = createMiddleware(async (ctx) => {
+			expect(typeof ctx.json).toBe("function");
+			expect(typeof ctx.error).toBe("function");
+			expect(typeof ctx.redirect).toBe("function");
+			expect(typeof ctx.getSignedCookie).toBe("function");
+			ctx.setHeader("x-mw", "yes");
+			return { ok: true };
+		});
+		const endpoint = createEndpoint(
+			"/test",
+			{
+				method: "GET",
+				use: [middleware],
+			},
+			async (ctx) => ctx.context,
+		);
+		const response = await endpoint({
+			returnHeaders: true,
+		});
+		expect(response.response).toEqual({ ok: true });
+		expect(response.headers.get("x-mw")).toBe("yes");
+	});
+
 	it("should let a later middleware replace a header", async () => {
 		const first = createMiddleware(async (ctx) => {
 			ctx.setHeader("x-test", "first");

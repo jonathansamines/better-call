@@ -347,21 +347,28 @@ async function applyMiddleware(
 	ctx: InternalContext,
 	hooks: MiddlewareHandler[],
 ) {
-	for (const middleware of hooks) {
-		const response = (await middleware({
-			...ctx,
-			returnHeaders: true,
-			asResponse: false,
-		})) as {
-			response?: any;
-			headers?: Headers;
-		};
-		if (response.response) {
-			Object.assign(ctx.context, response.response);
+	const prevReturnHeaders = ctx.returnHeaders;
+	const prevAsResponse = ctx.asResponse;
+	ctx.returnHeaders = true;
+	ctx.asResponse = false;
+	try {
+		for (const middleware of hooks) {
+			const response = (await middleware(ctx as never)) as {
+				response?: any;
+				headers?: Headers;
+			};
+			if (response.response) {
+				Object.assign(ctx.context, response.response);
+			}
+			// Nested middleware with no schema can reuse this context, so skip a
+			// no-op (and set-cookie-duplicating) copy of the same Headers.
+			if (response.headers && response.headers !== ctx._responseHeaders) {
+				copyHeaders(ctx.responseHeaders, response.headers);
+			}
 		}
-		if (response.headers) {
-			copyHeaders(ctx.responseHeaders, response.headers);
-		}
+	} finally {
+		ctx.returnHeaders = prevReturnHeaders;
+		ctx.asResponse = prevAsResponse;
 	}
 	return ctx;
 }

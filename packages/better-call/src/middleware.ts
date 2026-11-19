@@ -115,6 +115,33 @@ export type MiddlewareContext<
 	context: Prettify<Context>;
 };
 
+function middlewareNeedsOwnContext(options: MiddlewareOptions) {
+	return Boolean(
+		options.body ||
+			options.query ||
+			options.use?.length ||
+			options.requireHeaders ||
+			options.requireRequest,
+	);
+}
+
+function isReusableEndpointContext(
+	context: InputContext<any, any>,
+): context is InputContext<any, any> & {
+	_responseHeaders: Headers | undefined;
+} {
+	const candidate = context as Record<string, unknown>;
+	// Do not read `responseHeaders`: on InternalContext it is a getter that
+	// allocates. Own `_responseHeaders` plus helper methods identifies the
+	// class instance; a spread copy has the field but not the methods.
+	return (
+		typeof candidate.getHeader === "function" &&
+		typeof candidate.setCookie === "function" &&
+		typeof candidate.json === "function" &&
+		Object.prototype.hasOwnProperty.call(candidate, "_responseHeaders")
+	);
+}
+
 export function createMiddleware<Options extends MiddlewareOptions, R>(
 	options: Options,
 	handler: (context: MiddlewareContext<Options>) => Promise<R>,
@@ -139,12 +166,19 @@ export function createMiddleware(optionsOrHandler: any, handler?: any) {
 			typeof optionsOrHandler === "function" ? optionsOrHandler : handler;
 		const options =
 			typeof optionsOrHandler === "function" ? {} : optionsOrHandler;
-		const created = createInternalContext(context, {
-			options,
-			path: "/",
-		});
-		const internalContext =
-			created instanceof Promise ? await created : created;
+		let internalContext: Awaited<ReturnType<typeof createInternalContext>>;
+		if (
+			!middlewareNeedsOwnContext(options) &&
+			isReusableEndpointContext(context)
+		) {
+			internalContext = context as typeof internalContext;
+		} else {
+			const created = createInternalContext(context, {
+				options,
+				path: "/",
+			});
+			internalContext = created instanceof Promise ? await created : created;
+		}
 
 		if (!_handler) {
 			throw new Error("handler must be defined");
