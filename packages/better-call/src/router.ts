@@ -166,6 +166,9 @@ export const createRouter = <
 		config?.basePath && config.basePath !== "/"
 			? config.basePath.replace(/\/+$/, "")
 			: "";
+	const hasRouterMiddleware = Boolean(config?.routerMiddleware?.length);
+	const onRequest = config?.onRequest;
+	const onResponse = config?.onResponse;
 
 	const processRequest = async (request: Request) => {
 		const url = new URL(request.url);
@@ -188,7 +191,7 @@ export const createRouter = <
 		}
 
 		// Reject empty paths and paths with consecutive slashes.
-		if (path.length === 0 || /\/{2,}/.test(path)) {
+		if (path.length === 0 || path.includes("//")) {
 			return new Response(null, { status: 404, statusText: "Not Found" });
 		}
 
@@ -207,32 +210,37 @@ export const createRouter = <
 			return new Response(null, { status: 404, statusText: "Not Found" });
 
 		const query: Record<string, string | string[]> = {};
-		url.searchParams.forEach((value, key) => {
-			if (key in query) {
-				if (Array.isArray(query[key])) {
-					(query[key] as string[]).push(value);
+		if (url.search) {
+			url.searchParams.forEach((value, key) => {
+				if (key in query) {
+					if (Array.isArray(query[key])) {
+						(query[key] as string[]).push(value);
+					} else {
+						query[key] = [query[key] as string, value];
+					}
 				} else {
-					query[key] = [query[key] as string, value];
+					query[key] = value;
 				}
-			} else {
-				query[key] = value;
-			}
-		});
+			});
+		}
 
 		const handler = route.data;
+		const method = request.method;
 
 		try {
 			// Determine which allowedMediaTypes to use: endpoint-level overrides router-level
 			const allowedMediaTypes =
 				handler.options.metadata?.allowedMediaTypes ||
 				config?.allowedMediaTypes;
+			const skipBody =
+				handler.options.disableBody || method === "GET" || method === "HEAD";
 			const context = {
 				path,
-				method: request.method as "GET",
+				method: method as "GET",
 				headers: request.headers,
 				params: route.params ? { ...route.params } : {},
 				request: request,
-				body: handler.options.disableBody
+				body: skipBody
 					? undefined
 					: await getBody(
 							handler.options.cloneRequest ? request.clone() : request,
@@ -244,7 +252,9 @@ export const createRouter = <
 				// Middleware results merge into this object, so each request needs its own copy.
 				context: { ...config?.routerContext },
 			};
-			const middlewareRoutes = findAllRoutes(middlewareRouter, "*", path);
+			const middlewareRoutes = hasRouterMiddleware
+				? findAllRoutes(middlewareRouter, "*", path)
+				: undefined;
 			if (middlewareRoutes?.length) {
 				for (const { data: middleware, params } of middlewareRoutes) {
 					const res = await (middleware as Endpoint)({
@@ -294,15 +304,22 @@ export const createRouter = <
 
 	return {
 		handler: async (request: Request) => {
-			const onReq = await config?.onRequest?.(request);
-			if (onReq instanceof Response) {
-				return onReq;
+			let req = request;
+			if (onRequest) {
+				const onReq = await onRequest(request);
+				if (onReq instanceof Response) {
+					return onReq;
+				}
+				if (isRequest(onReq)) {
+					req = onReq;
+				}
 			}
-			const req = isRequest(onReq) ? onReq : request;
 			const res = await processRequest(req);
-			const onRes = await config?.onResponse?.(res, req);
-			if (onRes instanceof Response) {
-				return onRes;
+			if (onResponse) {
+				const onRes = await onResponse(res, req);
+				if (onRes instanceof Response) {
+					return onRes;
+				}
 			}
 			return res;
 		},
